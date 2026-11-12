@@ -53,6 +53,12 @@ h1{font-family:var(--display);font-weight:600;font-size:1.3rem;letter-spacing:-.
 .tabs .n{font-family:var(--display);font-size:.72rem;font-weight:500;min-width:22px;padding:2px 6px;border-radius:99px;background:var(--bg);color:var(--muted);font-variant-numeric:tabular-nums}
 .tabs button[aria-pressed="true"] .n{background:var(--signal);color:var(--signal-ink)}
 
+/* arama ve tarih filtresi */
+#q{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:11px 14px;font-size:1rem;min-height:44px;outline:none;color:var(--ink)}
+#q::placeholder{color:var(--muted)}
+#q:focus{border-color:var(--ink)}
+#range{margin-top:-6px}
+
 /* liste */
 .group h2{font-size:1rem;font-weight:700;margin:6px 2px 8px;display:flex;align-items:baseline;gap:8px}
 .group h2 small{font-weight:500;color:var(--muted);font-size:.85rem}
@@ -160,6 +166,11 @@ a.cal small{display:block;color:var(--muted);font-weight:500;font-size:.8rem}
     <button id="tab-gorev" aria-pressed="false">Görevler <span class="n" id="n-gorev">0</span></button>
   </div>
 
+  <input id="q" type="search" placeholder="İşlerde ara…" aria-label="İşlerde ara">
+  <div class="pick" id="range" role="group" aria-label="Tarih filtresi">
+    <button type="button" data-v="all" aria-pressed="true">Tümü</button><button type="button" data-v="today" aria-pressed="false">Bugün</button><button type="button" data-v="week" aria-pressed="false">7 gün</button>
+  </div>
+
   <div id="lists"></div>
 </div>
 
@@ -216,6 +227,12 @@ a.cal small{display:block;color:var(--muted);font-weight:500;font-size:.8rem}
     <label>Saatli işlerde ne kadar önce hatırlatsın<select id="s-lead"></select></label>
     <label class="switch">Saati olmayan işleri o sabah hatırlat<input type="checkbox" id="s-morning"></label>
     <label>Sabah hatırlatma saati<input type="time" id="s-mtime"></label>
+    <div class="btns">
+      <button type="button" class="btn ghost" id="x-json">Yedek al</button>
+      <button type="button" class="btn ghost" id="x-ics">Takvim dosyası (.ics)</button>
+      <button type="button" class="btn ghost" id="x-in-btn">Yedekten yükle</button>
+      <input type="file" id="x-in" accept="application/json,.json" hidden>
+    </div>
     <p class="note">Telefon, kapatılan web uygulamalarını uyutabilir. Bu durumda kaçan hatırlatma, uygulamayı ilk açtığınızda gelir. Kaçmaması gereken bir iş için işin üstüne dokunup “Google Takvim'e ekle”yi kullanın.</p>
     <div class="btns">
       <button type="button" class="btn ghost" id="s-test">Deneme bildirimi</button>
@@ -248,8 +265,8 @@ let list="yapilacak", tasks=[], settings={lead:10,morning:true,mtime:"09:00"};
 try{ tasks=JSON.parse(localStorage.getItem("sa-tasks")||"[]"); }catch(e){ tasks=[]; }
 try{ const l=localStorage.getItem("sa-list"); if(l==="gorev"||l==="yapilacak") list=l; }catch(e){}
 try{ Object.assign(settings,JSON.parse(localStorage.getItem("sa-settings")||"{}")); }catch(e){}
-function save(){ try{ localStorage.setItem("sa-tasks",JSON.stringify(tasks)); }catch(e){ status("Kaydedilemedi: telefonun depolama alanını kontrol edin.","err"); } }
-function saveSettings(){ try{ localStorage.setItem("sa-settings",JSON.stringify(settings)); }catch(e){} }
+function save(){ try{ localStorage.setItem("sa-tasks",JSON.stringify(tasks)); }catch(e){ status("Kaydedilemedi: telefonun depolama alanını kontrol edin.","err"); } syncSchedule(); }
+function saveSettings(){ try{ localStorage.setItem("sa-settings",JSON.stringify(settings)); }catch(e){} syncSchedule(); }
 
 const LEADS=[[0,"Tam zamanında"],[5,"5 dakika önce"],[10,"10 dakika önce"],[15,"15 dakika önce"],[30,"30 dakika önce"],[60,"1 saat önce"],[120,"2 saat önce"],[1440,"1 gün önce"]];
 const leadName=m=>{ const f=LEADS.find(x=>x[0]===m); return f?f[1]:m>=60&&m%60===0?(m/60)+" saat önce":m+" dakika önce"; };
@@ -271,6 +288,19 @@ function fireTime(t){
   return null;
 }
 function fmtClock(ms){ const d=new Date(ms); const di=iso(d); return (di===todayIso?"bugün":di===tmrIso?"yarın":dayLabel(di).toLocaleLowerCase("tr"))+" "+pad(d.getHours())+":"+pad(d.getMinutes()); }
+
+/* ---------- arama ve filtre ---------- */
+let query="", range="all";
+function matchQ(t){
+  if(query && !t.title.toLocaleLowerCase("tr").includes(query)) return false;
+  if(range==="all") return true;
+  if(!t.due) return false;
+  if(range==="today") return t.due<=todayIso;
+  const end=new Date(now); end.setDate(now.getDate()+6);
+  return t.due<=iso(end);
+}
+$("#q").addEventListener("input",e=>{ query=e.target.value.trim().toLocaleLowerCase("tr"); render(); });
+document.querySelectorAll("#range button").forEach(b=>b.addEventListener("click",()=>{ range=b.dataset.v; pickSet($("#range"),range); render(); }));
 
 /* ---------- çizim ---------- */
 function itemEl(t,late){
@@ -294,7 +324,9 @@ const sortKey=t=>(t.due||"9999-99-99")+" "+(t.time||"99:99")+" "+(t.priority==="
 
 function render(){
   const box=$("#lists"); box.innerHTML="";
-  const mine=tasks.filter(t=>(t.list||"yapilacak")===list);
+  const base=tasks.filter(t=>(t.list||"yapilacak")===list);
+  const mine=base.filter(matchQ);
+  const filtering=!!query||range!=="all";
   const open=mine.filter(t=>!t.done).sort((a,b)=>sortKey(a)<sortKey(b)?-1:1);
   const done=mine.filter(t=>t.done).sort((a,b)=>(b.doneAt||0)-(a.doneAt||0));
   $("#n-yapilacak").textContent=tasks.filter(t=>!t.done&&(t.list||"yapilacak")==="yapilacak").length;
@@ -302,7 +334,8 @@ function render(){
   renderNext();
   if(!open.length){
     const e=document.createElement("div"); e.className="empty";
-    e.innerHTML=`<strong>${mine.length?"Hepsi bitti.":list==="gorev"?"Görev listeniz boş.":"Yapılacaklar listeniz boş."}</strong>Aşağıdaki sarı mikrofona dokunup söyleyin, örneğin “perşembe saat 14'te Ali Bey'i ara, acil”.`;
+    const msg=filtering?"Bu aramada eşleşen iş yok.":base.length?"Hepsi bitti.":list==="gorev"?"Görev listeniz boş.":"Yapılacaklar listeniz boş.";
+    e.innerHTML=`<strong>${msg}</strong>${filtering?"":"Aşağıdaki sarı mikrofona dokunup söyleyin, örneğin “perşembe saat 14'te Ali Bey'i ara, acil”."}`;
     box.appendChild(e);
   }
   const groups=[];
@@ -389,9 +422,29 @@ function splitItems(text){
   return text.split(/\s*(?:[;\n]|\bbir de\b|\bayrıca\b|\bsonra da\b)\s*/i).map(x=>x.trim()).filter(x=>x.length>1);
 }
 
+/* sesli komutlar: "market alışverişini tamamla", "toplantıyı sil" */
+function voiceCommand(text){
+  const low=text.trim().toLocaleLowerCase("tr").replace(/[.!?]+$/,"").trim();
+  let m=low.match(/^(.+?)\s+(?:işini\s+|işi\s+)?(tamamla|tamamlandı|bitti|bitirdim)$/);
+  if(m) return {type:"done",q:m[1]};
+  m=low.match(/^(.+?)\s+(?:işini\s+|işi\s+)?sil$/);
+  if(m) return {type:"delete",q:m[1]};
+  return null;
+}
+function findTask(q){
+  const hits=tasks.filter(t=>t.title.toLocaleLowerCase("tr").includes(q));
+  return hits.find(t=>!t.done)||hits[0]||null;
+}
 function submit(){
   refreshDates();
   const text=$("#txt").value.trim(); if(!text) return;
+  const cmd=voiceCommand(text), target=cmd&&findTask(cmd.q);
+  if(target){
+    $("#txt").value=""; autoGrow();
+    if(cmd.type==="done"){ setDone(target,true); status("Tamamlandı: "+target.title,"ok"); }
+    else { tasks=tasks.filter(x=>x!==target); closeNotif(target.id); save(); render(); checkReminders(); status("Silindi: "+target.title,"ok"); }
+    return;
+  }
   const items=splitItems(text).map(parse);
   for(const it of items){ it.id=Date.now().toString(36)+Math.random().toString(36).slice(2,6); it.done=false; it.createdAt=Date.now(); tasks.push(it); }
   save(); $("#txt").value=""; autoGrow(); render(); checkReminders();
@@ -478,8 +531,19 @@ async function askPermission(){
   if(!("Notification" in window)) return;
   try{ await Notification.requestPermission(); }catch(e){}
   renderNext(); if($("#settings").open) renderPerm();
-  if(permState()==="granted"){ status("Bildirimler açıldı.","ok"); checkReminders(); }
+  if(permState()==="granted"){ status("Bildirimler açıldı.","ok"); checkReminders(); registerPeriodic(); syncSchedule(); }
   else if(permState()==="denied") status("Bildirim izni verilmedi. Chrome ayarlarından açabilirsiniz.","err");
+}
+/* Uygulama kapalıyken de hatırlatma için programı Service Worker'a veriyoruz */
+function syncSchedule(){
+  if(!("serviceWorker" in navigator)) return;
+  const items=tasks.map(t=>({id:t.id,title:t.title,ft:fireTime(t),body:notifBody(t,false)}))
+    .filter(x=>x.ft && x.ft>Date.now()-12*3600000);
+  navigator.serviceWorker.ready.then(r=>{ if(r.active) r.active.postMessage({type:"schedule",items}); }).catch(()=>{});
+}
+async function registerPeriodic(){
+  try{ const r=await navigator.serviceWorker.ready;
+    if(r.periodicSync && permState()==="granted") await r.periodicSync.register("reminders",{minInterval:15*60*1000}); }catch(e){}
 }
 function swReady(){ if(!("serviceWorker" in navigator)) return Promise.resolve(null);
   return Promise.race([navigator.serviceWorker.ready,new Promise(r=>setTimeout(()=>r(null),3000))]); }
@@ -544,6 +608,54 @@ if("serviceWorker" in navigator){
 (function(){ const q=new URLSearchParams(location.search); if(q.get("id")){ const a=q.get("n")||"open", id=q.get("id");
   history.replaceState(null,"",location.pathname); setTimeout(()=>handleAction(a,id),50); } })();
 
+/* ---------- yedek ve takvim dosyası ---------- */
+function download(name,type,data){
+  const url=URL.createObjectURL(new Blob([data],{type})), a=document.createElement("a");
+  a.href=url; a.download=name; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },1000);
+}
+$("#x-json").onclick=()=>{ download("sesli-ajanda-"+todayIso+".json","application/json",JSON.stringify({app:"sesli-ajanda",version:1,tasks,settings},null,2)); status("Yedek indirildi.","ok"); };
+$("#x-in-btn").onclick=()=>$("#x-in").click();
+$("#x-in").addEventListener("change",async e=>{
+  const f=e.target.files[0]; e.target.value=""; if(!f) return;
+  try{
+    const d=JSON.parse(await f.text()); if(!d||!Array.isArray(d.tasks)) throw new Error("format");
+    const ids=new Set(tasks.map(t=>t.id)); let n=0;
+    for(const t of d.tasks){ if(t&&t.id&&t.title&&!ids.has(t.id)){ t.trig=null; tasks.push(t); n++; } }
+    save(); render(); checkReminders();
+    status(n?n+" iş geri yüklendi.":"Yedekte yeni iş yok.","ok");
+  }catch(err){ status("Yedek dosyası okunamadı.","err"); }
+});
+const icsText=s=>String(s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n");
+const utcStamp=d=>d.toISOString().replace(/[-:]/g,"").replace(/\.\d{3}/,"");
+function exportIcs(){
+  const L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Sesli Ajanda//TR","CALSCALE:GREGORIAN"];
+  const stamp=utcStamp(new Date());
+  for(const t of tasks){
+    if(t.done||!t.due) continue;
+    const allDay=!t.time;
+    const start=allDay?new Date(t.due+"T00:00"):new Date(t.due+"T"+t.time);
+    const end=new Date(start);
+    if(allDay) end.setDate(end.getDate()+1); else end.setTime(start.getTime()+3600000);
+    L.push("BEGIN:VEVENT","UID:"+t.id+"@sesli-ajanda","DTSTAMP:"+stamp);
+    L.push(allDay?"DTSTART;VALUE=DATE:"+t.due.replace(/-/g,""):"DTSTART:"+utcStamp(start));
+    L.push(allDay?"DTEND;VALUE=DATE:"+iso(end).replace(/-/g,""):"DTEND:"+utcStamp(end));
+    L.push("SUMMARY:"+icsText(t.title+(t.priority==="yuksek"?" (Acil)":"")));
+    const ft=fireTime(t);
+    if(ft){
+      const mins=Math.round((ft-start.getTime())/60000);
+      L.push("BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:"+icsText(t.title),"TRIGGER:"+(mins<0?"-PT"+(-mins)+"M":"PT"+mins+"M"),"END:VALARM");
+    }
+    L.push("END:VEVENT");
+  }
+  L.push("END:VCALENDAR");
+  return L.join("\r\n");
+}
+$("#x-ics").onclick=()=>{ download("sesli-ajanda.ics","text/calendar;charset=utf-8",exportIcs()); status("Takvim dosyası indirildi. Açınca telefon takvimine eklenir.","ok"); };
+
+/* ana ekran kısayolundan "Yeni iş ekle" */
+if(new URLSearchParams(location.search).get("yeni")) setTimeout(()=>$("#txt").focus(),200);
+
 /* ---------- ses ---------- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition; let rec=null, listening=false, heard="";
 if(!SR) status("Bu tarayıcı sesli yazmayı desteklemiyor. Chrome ile açın ya da klavyedeki mikrofonu kullanın.");
@@ -560,7 +672,7 @@ $("#mic").onclick=()=>{
   try{ rec.start(); listening=true; $("#mic").classList.add("on"); status("Dinliyorum…","ok"); }catch(e){ status("Mikrofon başlatılamadı, tekrar deneyin.","err"); }
 };
 
-render(); checkReminders();
+render(); checkReminders(); syncSchedule(); registerPeriodic();
 document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ refreshDates(); render(); checkReminders(); } });
 </script>
 </body>

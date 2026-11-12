@@ -1,6 +1,9 @@
 {
+  "id": "./",
   "name": "Sesli Ajanda",
   "short_name": "Ajanda",
+  "description": "Sesle yapılacaklar ve görevler: söyleyin, hatırlatsın.",
+  "categories": ["productivity"],
   "lang": "tr",
   "start_url": "./",
   "scope": "./",
@@ -10,5 +13,8 @@
   "icons": [
     {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
     {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ],
+  "shortcuts": [
+    {"name": "Yeni iş ekle", "short_name": "Yeni", "url": "./?yeni=1", "icons": [{"src": "icon-192.png", "sizes": "192x192"}]}
   ]
 }
