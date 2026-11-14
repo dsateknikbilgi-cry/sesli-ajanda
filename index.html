@@ -244,7 +244,7 @@ a.cal small{display:block;color:var(--muted);font-weight:500;font-size:.8rem}
 
 <div class="toast" id="toast" role="alert"><span id="toast-t"></span><button id="toast-done">Tamamlandı</button></div>
 
-<script src="config.js"></script>
+<script src="config.js?v=6"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -607,7 +607,10 @@ function handleAction(action,id){
   else if(!t.done) openEdit(t);
 }
 if("serviceWorker" in navigator){
-  navigator.serviceWorker.register("sw.js").catch(()=>{});
+  const hadController=!!navigator.serviceWorker.controller; let reloaded=false;
+  navigator.serviceWorker.register("sw.js",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});
+  // yeni sürüm gelince sayfayı bir kez yenile, eski hal ekranda kalmasın
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{ if(hadController&&!reloaded){ reloaded=true; location.reload(); } });
   navigator.serviceWorker.addEventListener("message",e=>{ if(e.data&&e.data.type==="notif") handleAction(e.data.action,e.data.id); });
 }
 (function(){ const q=new URLSearchParams(location.search); if(q.get("id")){ const a=q.get("n")||"open", id=q.get("id");
