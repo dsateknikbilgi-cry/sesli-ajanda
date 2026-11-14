@@ -661,6 +661,7 @@ async function cloudSignIn(){
 function cloudSignOut(){ firebase.auth().signOut(); }
 function renderCloud(){
   const el=$("#cloud"); if(!el) return;
+  if(cloudConfigured() && !CLOUD.uid && CLOUD.restoring){ el.innerHTML=`<span>Senkron bağlanıyor…<small>Hesabınız kontrol ediliyor</small></span>`; return; }
   if(!cloudConfigured()){ el.innerHTML=`<span>Cihazlar arası senkron kapalı<small>config.js dosyasına Firebase ayarları girilmemiş</small></span>`; return; }
   el.innerHTML=CLOUD.uid
     ? `<span>Senkron açık<small>${CLOUD.email}</small></span><button type="button" class="btn ghost" id="cloudOut" style="flex:none">Çıkış</button>`
@@ -673,7 +674,13 @@ function initCloud(){
   try{
     if(!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
     firebase.firestore().enablePersistence({synchronizeTabs:true}).catch(()=>{});
-    firebase.auth().onAuthStateChanged(u=>{ if(u) startCloud(u); else stopCloud(); });
+    // oturum telefonda kalıcı olsun: tarayıcı kapanınca da giriş hatırlansın
+    firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
+    try{ navigator.storage&&navigator.storage.persist&&navigator.storage.persist(); }catch(e){}
+    try{ CLOUD.restoring=localStorage.getItem("sa-signed")==="1"; }catch(e){}
+    firebase.auth().onAuthStateChanged(u=>{ CLOUD.restoring=false;
+      try{ u?localStorage.setItem("sa-signed","1"):localStorage.removeItem("sa-signed"); }catch(e){}
+      if(u) startCloud(u); else stopCloud(); });
     firebase.auth().getRedirectResult().catch(()=>{});
   }catch(e){ status("Bulut ayarı çalışmadı: "+e.message,"err"); }
 }
