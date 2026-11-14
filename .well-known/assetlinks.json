@@ -5,4 +5,11 @@
     "package_name": "com.dsateknik.ajanda.twa",
     "sha256_cert_fingerprints": ["94:78:AD:B2:E6:74:D3:C2:66:06:4C:7D:EB:39:33:D3:D9:4A:F7:D2:EF:93:A4:1D:1B:A2:78:0A:40:E3:50:37"]
   }
+},{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.dsateknik.ajanda.kisisel",
+    "sha256_cert_fingerprints": ["F4:CC:F8:09:5F:E8:5A:7C:88:4E:95:39:CB:B7:92:E5:71:63:37:ED:AE:BD:F4:FA:D6:37:AD:3C:CE:98:96:39"]
+  }
 }]
