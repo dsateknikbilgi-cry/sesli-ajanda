@@ -224,6 +224,7 @@ a.cal small{display:block;color:var(--muted);font-weight:500;font-size:.8rem}
     <div class="grab"></div>
     <h3 id="set-h">Hatırlatmalar</h3>
     <div class="perm" id="perm"></div>
+    <div class="perm" id="cloud"></div>
     <label>Saatli işlerde ne kadar önce hatırlatsın<select id="s-lead"></select></label>
     <label class="switch">Saati olmayan işleri o sabah hatırlat<input type="checkbox" id="s-morning"></label>
     <label>Sabah hatırlatma saati<input type="time" id="s-mtime"></label>
@@ -243,6 +244,10 @@ a.cal small{display:block;color:var(--muted);font-weight:500;font-size:.8rem}
 
 <div class="toast" id="toast" role="alert"><span id="toast-t"></span><button id="toast-done">Tamamlandı</button></div>
 
+<script src="config.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
 const TR_DAYS=["Pazar","Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi"];
 const TR_MON=["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
@@ -265,7 +270,7 @@ let list="yapilacak", tasks=[], settings={lead:10,morning:true,mtime:"09:00"};
 try{ tasks=JSON.parse(localStorage.getItem("sa-tasks")||"[]"); }catch(e){ tasks=[]; }
 try{ const l=localStorage.getItem("sa-list"); if(l==="gorev"||l==="yapilacak") list=l; }catch(e){}
 try{ Object.assign(settings,JSON.parse(localStorage.getItem("sa-settings")||"{}")); }catch(e){}
-function save(){ try{ localStorage.setItem("sa-tasks",JSON.stringify(tasks)); }catch(e){ status("Kaydedilemedi: telefonun depolama alanını kontrol edin.","err"); } syncSchedule(); }
+function save(){ try{ localStorage.setItem("sa-tasks",JSON.stringify(tasks)); }catch(e){ status("Kaydedilemedi: telefonun depolama alanını kontrol edin.","err"); } syncSchedule(); pushCloud(); }
 function saveSettings(){ try{ localStorage.setItem("sa-settings",JSON.stringify(settings)); }catch(e){} syncSchedule(); }
 
 const LEADS=[[0,"Tam zamanında"],[5,"5 dakika önce"],[10,"10 dakika önce"],[15,"15 dakika önce"],[30,"30 dakika önce"],[60,"1 saat önce"],[120,"2 saat önce"],[1440,"1 gün önce"]];
@@ -517,7 +522,7 @@ function renderPerm(){
 $("#openSettings").onclick=()=>{
   fillRemindSelect($("#s-lead"),false); $("#s-lead").value=String(settings.lead);
   $("#s-morning").checked=!!settings.morning; $("#s-mtime").value=settings.mtime||"09:00"; $("#s-mtime").disabled=!settings.morning;
-  renderPerm(); $("#settings").showModal(); };
+  renderPerm(); renderCloud(); $("#settings").showModal(); };
 $("#s-lead").onchange=e=>{ settings.lead=+e.target.value; saveSettings(); render(); checkReminders(); };
 $("#s-morning").onchange=e=>{ settings.morning=e.target.checked; $("#s-mtime").disabled=!settings.morning; saveSettings(); render(); checkReminders(); };
 $("#s-mtime").onchange=e=>{ if(e.target.value){ settings.mtime=e.target.value; saveSettings(); render(); checkReminders(); } };
@@ -608,6 +613,68 @@ if("serviceWorker" in navigator){
 (function(){ const q=new URLSearchParams(location.search); if(q.get("id")){ const a=q.get("n")||"open", id=q.get("id");
   history.replaceState(null,"",location.pathname); setTimeout(()=>handleAction(a,id),50); } })();
 
+/* ---------- cihazlar arası senkron (Google girişi + Firestore) ---------- */
+const CLOUD={uid:null,email:"",unsub:null,rev:0,lastRev:0,merged:false};
+const cloudConfigured=()=>typeof firebase!=="undefined" && !!(window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey);
+function localWrite(){ try{ localStorage.setItem("sa-tasks",JSON.stringify(tasks)); }catch(e){} syncSchedule(); }
+function pushCloud(){
+  if(!CLOUD.uid) return;
+  CLOUD.rev=Date.now(); CLOUD.lastRev=Math.max(CLOUD.lastRev,CLOUD.rev);
+  firebase.firestore().collection("users").doc(CLOUD.uid)
+    .set({tasks:JSON.parse(JSON.stringify(tasks)),rev:CLOUD.rev})
+    .catch(e=>status("Buluta yazılamadı: "+(e.code||e.message),"err"));
+}
+function applyRemote(d,isNew){
+  if(isNew){ pushCloud(); CLOUD.merged=true; return; }
+  if(!CLOUD.merged){
+    // ilk girişte: buluttaki işler + bu cihazdaki (bulutta olmayan) işler birleşir
+    const ids=new Set((d.tasks||[]).map(t=>t.id));
+    tasks=[...(d.tasks||[]), ...tasks.filter(t=>!ids.has(t.id))];
+    CLOUD.merged=true; localWrite(); pushCloud(); render(); checkReminders();
+    return;
+  }
+  if((d.rev||0)>CLOUD.lastRev){ CLOUD.lastRev=d.rev; tasks=d.tasks||[]; localWrite(); render(); checkReminders(); }
+}
+function startCloud(u){
+  CLOUD.uid=u.uid; CLOUD.email=u.email||""; CLOUD.merged=false;
+  if(CLOUD.unsub) CLOUD.unsub();
+  const ref=firebase.firestore().collection("users").doc(u.uid);
+  CLOUD.unsub=ref.onSnapshot(snap=>{
+    if(snap.metadata.hasPendingWrites) return;
+    if(!snap.exists){ if(!snap.metadata.fromCache) applyRemote(null,true); return; }
+    applyRemote(snap.data(),false);
+  },err=>status("Bulut bağlantısı kurulamadı: "+(err.code||err.message),"err"));
+  renderCloud();
+}
+function stopCloud(){ if(CLOUD.unsub) CLOUD.unsub(); CLOUD.unsub=null; CLOUD.uid=null; CLOUD.email=""; CLOUD.merged=false; renderCloud(); }
+async function cloudSignIn(){
+  const p=new firebase.auth.GoogleAuthProvider();
+  try{ await firebase.auth().signInWithPopup(p); }
+  catch(e){
+    if(e.code==="auth/popup-blocked"||e.code==="auth/operation-not-supported-in-this-environment") await firebase.auth().signInWithRedirect(p);
+    else if(e.code!=="auth/popup-closed-by-user") status("Giriş yapılamadı: "+e.code,"err");
+  }
+}
+function cloudSignOut(){ firebase.auth().signOut(); }
+function renderCloud(){
+  const el=$("#cloud"); if(!el) return;
+  if(!cloudConfigured()){ el.innerHTML=`<span>Cihazlar arası senkron kapalı<small>config.js dosyasına Firebase ayarları girilmemiş</small></span>`; return; }
+  el.innerHTML=CLOUD.uid
+    ? `<span>Senkron açık<small>${CLOUD.email}</small></span><button type="button" class="btn ghost" id="cloudOut" style="flex:none">Çıkış</button>`
+    : `<span>Cihazlar arası senkron<small>Google hesabınızla giriş yapın</small></span><button type="button" class="btn main" id="cloudIn" style="flex:none">Giriş</button>`;
+  const a=$("#cloudIn"), b=$("#cloudOut");
+  if(a) a.onclick=cloudSignIn; if(b) b.onclick=cloudSignOut;
+}
+function initCloud(){
+  if(!cloudConfigured()) return;
+  try{
+    if(!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
+    firebase.firestore().enablePersistence({synchronizeTabs:true}).catch(()=>{});
+    firebase.auth().onAuthStateChanged(u=>{ if(u) startCloud(u); else stopCloud(); });
+    firebase.auth().getRedirectResult().catch(()=>{});
+  }catch(e){ status("Bulut ayarı çalışmadı: "+e.message,"err"); }
+}
+
 /* ---------- yedek ve takvim dosyası ---------- */
 function download(name,type,data){
   const url=URL.createObjectURL(new Blob([data],{type})), a=document.createElement("a");
@@ -672,7 +739,7 @@ $("#mic").onclick=()=>{
   try{ rec.start(); listening=true; $("#mic").classList.add("on"); status("Dinliyorum…","ok"); }catch(e){ status("Mikrofon başlatılamadı, tekrar deneyin.","err"); }
 };
 
-render(); checkReminders(); syncSchedule(); registerPeriodic();
+render(); checkReminders(); syncSchedule(); registerPeriodic(); initCloud(); renderCloud();
 document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ refreshDates(); render(); checkReminders(); } });
 </script>
 </body>
