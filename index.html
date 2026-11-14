@@ -244,7 +244,7 @@ a.cal small{display:block;color:var(--muted);font-weight:500;font-size:.8rem}
 
 <div class="toast" id="toast" role="alert"><span id="toast-t"></span><button id="toast-done">Tamamlandı</button></div>
 
-<script src="config.js?v=6"></script>
+<script src="config.js?v=10"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -653,6 +653,9 @@ function stopCloud(){ if(CLOUD.unsub) CLOUD.unsub(); CLOUD.unsub=null; CLOUD.uid
 async function cloudSignIn(){
   const p=new firebase.auth.GoogleAuthProvider();
   p.setCustomParameters({prompt:"select_account"}); // her girişte hesap seçtir
+  // telefonda / ana ekran uygulamasında yönlendirme daha güvenilir
+  const mobile=/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent)||matchMedia("(display-mode: standalone)").matches;
+  if(mobile && location.hostname===window.FIREBASE_CONFIG.authDomain){ await firebase.auth().signInWithRedirect(p); return; }
   try{ await firebase.auth().signInWithPopup(p); }
   catch(e){
     if(e.code==="auth/popup-blocked"||e.code==="auth/operation-not-supported-in-this-environment") await firebase.auth().signInWithRedirect(p);
