@@ -617,26 +617,34 @@ if("serviceWorker" in navigator){
   history.replaceState(null,"",location.pathname); setTimeout(()=>handleAction(a,id),50); } })();
 
 /* ---------- cihazlar arası senkron (Google girişi + Firestore) ---------- */
-const CLOUD={uid:null,email:"",unsub:null,rev:0,lastRev:0,merged:false};
+const CLOUD={uid:null,email:"",unsub:null,merged:false};
 const cloudConfigured=()=>typeof firebase!=="undefined" && !!(window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey);
 function localWrite(){ try{ localStorage.setItem("sa-tasks",JSON.stringify(tasks)); }catch(e){} syncSchedule(); }
+// Buluttaki liste esastır. Saat farkına bakılmaz; başka cihazdan gelen her değişiklik uygulanır.
+// "bilinen" = bulutta en son gördüğümüz işler. Bulutta olmayıp bilinenlerde olan iş başka
+// cihazda silinmiştir (geri getirilmez); hiç bilinmeyen iş bu cihazda yeni eklenmiştir (korunur).
+const knownKey=()=>"sa-cloud-ids:"+CLOUD.uid;
+function loadKnown(){ try{ return new Set(JSON.parse(localStorage.getItem(knownKey())||"[]")); }catch(e){ return new Set(); } }
+function saveKnown(list){ try{ localStorage.setItem(knownKey(),JSON.stringify(list.map(t=>t.id))); }catch(e){} }
 function pushCloud(){
-  if(!CLOUD.uid) return;
-  CLOUD.rev=Date.now(); CLOUD.lastRev=Math.max(CLOUD.lastRev,CLOUD.rev);
+  if(!CLOUD.uid||!CLOUD.merged) return;
+  saveKnown(tasks);
   firebase.firestore().collection("users").doc(CLOUD.uid)
-    .set({tasks:JSON.parse(JSON.stringify(tasks)),rev:CLOUD.rev})
+    .set({tasks:JSON.parse(JSON.stringify(tasks)),rev:Date.now()})
     .catch(e=>status("Buluta yazılamadı: "+(e.code||e.message),"err"));
 }
 function applyRemote(d,isNew){
-  if(isNew){ pushCloud(); CLOUD.merged=true; return; }
+  if(isNew){ CLOUD.merged=true; pushCloud(); return; }
+  const remote=d.tasks||[];
   if(!CLOUD.merged){
-    // ilk girişte: buluttaki işler + bu cihazdaki (bulutta olmayan) işler birleşir
-    const ids=new Set((d.tasks||[]).map(t=>t.id));
-    tasks=[...(d.tasks||[]), ...tasks.filter(t=>!ids.has(t.id))];
-    CLOUD.merged=true; localWrite(); pushCloud(); render(); checkReminders();
+    const known=loadKnown(), ids=new Set(remote.map(t=>t.id));
+    const fresh=tasks.filter(t=>!ids.has(t.id)&&!known.has(t.id));
+    tasks=[...remote,...fresh]; CLOUD.merged=true;
+    localWrite(); render(); checkReminders();
+    if(fresh.length) pushCloud(); else saveKnown(tasks);
     return;
   }
-  if((d.rev||0)>CLOUD.lastRev){ CLOUD.lastRev=d.rev; tasks=d.tasks||[]; localWrite(); render(); checkReminders(); }
+  tasks=remote; saveKnown(tasks); localWrite(); render(); checkReminders();
 }
 function startCloud(u){
   CLOUD.uid=u.uid; CLOUD.email=u.email||""; CLOUD.merged=false;
@@ -644,7 +652,8 @@ function startCloud(u){
   const ref=firebase.firestore().collection("users").doc(u.uid);
   CLOUD.unsub=ref.onSnapshot(snap=>{
     if(snap.metadata.hasPendingWrites) return;
-    if(!snap.exists){ if(!snap.metadata.fromCache) applyRemote(null,true); return; }
+    if(!CLOUD.merged && snap.metadata.fromCache) return; // ilk birleştirme sunucudaki güncel hal ile yapılır
+    if(!snap.exists){ applyRemote(null,true); return; }
     applyRemote(snap.data(),false);
   },err=>status("Bulut bağlantısı kurulamadı: "+(err.code||err.message),"err"));
   renderCloud();
