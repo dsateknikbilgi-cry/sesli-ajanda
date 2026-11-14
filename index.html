@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Sesli Ajanda</title>
 <meta name="theme-color" content="#14283d">
-<link rel="manifest" href="manifest.json">
+<script>
+// Kişisel sürüm: ?mod=kisisel ile açılır ve bu cihazda hatırlanır. Bulut/giriş yoktur, veriler cihazda kalır.
+window.KISISEL=(function(){ try{ if(new URLSearchParams(location.search).get("mod")==="kisisel") localStorage.setItem("sa-mode","kisisel"); return localStorage.getItem("sa-mode")==="kisisel"; }catch(e){ return /mod=kisisel/.test(location.search); } })();
+document.write('<link rel="manifest" href="'+(window.KISISEL?"manifest-kisisel.json":"manifest.json")+'">');
+</script>
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&family=Manrope:wght@400;500;600;700&display=swap">
@@ -244,10 +248,12 @@ a.cal small{display:block;color:var(--muted);font-weight:500;font-size:.8rem}
 
 <div class="toast" id="toast" role="alert"><span id="toast-t"></span><button id="toast-done">Tamamlandı</button></div>
 
-<script src="config.js?v=10"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+if(!window.KISISEL){
+  document.write('<script src="config.js?v=10"><\/script>');
+  ["app","auth","firestore"].forEach(function(m){ document.write('<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-'+m+'-compat.js"><\/script>'); });
+}
+</script>
 <script>
 const TR_DAYS=["Pazar","Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi"];
 const TR_MON=["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
@@ -675,6 +681,7 @@ function cloudSignOut(){ firebase.auth().signOut(); }
 function renderCloud(){
   const el=$("#cloud"); if(!el) return;
   if(cloudConfigured() && !CLOUD.uid && CLOUD.restoring){ el.innerHTML=`<span>Senkron bağlanıyor…<small>Hesabınız kontrol ediliyor</small></span>`; return; }
+  if(window.KISISEL){ el.innerHTML=`<span>Kişisel sürüm<small>İşleriniz yalnızca bu cihazda saklanır, hiçbir yere gönderilmez. Ara sıra “Yedek al” yapın.</small></span>`; return; }
   if(!cloudConfigured()){ el.innerHTML=`<span>Cihazlar arası senkron kapalı<small>config.js dosyasına Firebase ayarları girilmemiş</small></span>`; return; }
   el.innerHTML=CLOUD.uid
     ? `<span>Senkron açık<small>${CLOUD.email}</small></span><button type="button" class="btn ghost" id="cloudOut" style="flex:none">Çıkış</button>`
