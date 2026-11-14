@@ -652,6 +652,7 @@ function startCloud(u){
 function stopCloud(){ if(CLOUD.unsub) CLOUD.unsub(); CLOUD.unsub=null; CLOUD.uid=null; CLOUD.email=""; CLOUD.merged=false; renderCloud(); }
 async function cloudSignIn(){
   const p=new firebase.auth.GoogleAuthProvider();
+  p.setCustomParameters({prompt:"select_account"}); // her girişte hesap seçtir
   try{ await firebase.auth().signInWithPopup(p); }
   catch(e){
     if(e.code==="auth/popup-blocked"||e.code==="auth/operation-not-supported-in-this-environment") await firebase.auth().signInWithRedirect(p);
