@@ -8,3 +8,5 @@ window.FIREBASE_CONFIG = {
   messagingSenderId: "919899696334",
   appId: "1:919899696334:web:460cb5dbd2cddc2e9a349f"
 };
+// ajanda.dsateknik.com'da giriş aynı adresten yapılsın (telefonlar oturumu hatırlasın)
+if (location.hostname === "ajanda.dsateknik.com") window.FIREBASE_CONFIG.authDomain = "ajanda.dsateknik.com";
