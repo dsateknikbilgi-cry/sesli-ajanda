@@ -185,7 +185,7 @@ a.cal small{display:block;color:var(--muted);font-weight:500;font-size:.8rem}
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
       </button>
     </div>
-    <div class="status" id="status" aria-live="polite">Mikrofona dokunup söyleyin, bitince kendisi ekler.</div>
+    <div class="status" id="status" aria-live="polite">Mikrofona dokunup söyleyin. Bitince tekrar dokunun ya da biraz susun.</div>
   </div>
 </div>
 
@@ -727,19 +727,47 @@ $("#x-ics").onclick=()=>{ download("sesli-ajanda.ics","text/calendar;charset=utf
 if(new URLSearchParams(location.search).get("yeni")) setTimeout(()=>$("#txt").focus(),200);
 
 /* ---------- ses ---------- */
-const SR=window.SpeechRecognition||window.webkitSpeechRecognition; let rec=null, listening=false, heard="";
+// Kısa duraksamalarda durmaz: tarayıcı bir oturumu bitirince yenisini başlatır.
+// Kullanıcı mikrofona tekrar basınca ya da SUSMA süresi kadar sessiz kalınca biter.
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const SUSMA=3000;
+let rec=null, listening=false, wantListen=false, base="", finalText="", sessionText="", lastSpeech=0, silenceTimer=null, micError=null;
 if(!SR) status("Bu tarayıcı sesli yazmayı desteklemiyor. Chrome ile açın ya da klavyedeki mikrofonu kullanın.");
+function showHeard(){ $("#txt").value=(base+finalText+sessionText).replace(/\s+/g," ").trimStart(); autoGrow(); }
+function finishListening(){
+  wantListen=false; clearInterval(silenceTimer); listening=false; $("#mic").classList.remove("on");
+  try{ rec&&rec.abort(); }catch(e){}
+  const heard=(finalText+sessionText).trim(); sessionText=""; finalText="";
+  if(heard) submit();
+  else if(micError) status(micError,"err");
+  else if($("#status").textContent.startsWith("Dinliyorum")) status("Ses duyulmadı, tekrar deneyin.","err");
+}
+function beginSession(){
+  rec=new SR(); rec.lang="tr-TR"; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
+  sessionText="";
+  rec.onresult=e=>{ let t=""; for(const r of e.results) t+=r[0].transcript; sessionText=t; lastSpeech=Date.now(); showHeard(); };
+  rec.onerror=e=>{
+    if(e.error==="no-speech"||e.error==="aborted") return;
+    micError={"not-allowed":"Mikrofon izni verilmedi. Adres çubuğundaki simgeden mikrofona izin verin.","service-not-allowed":"Mikrofon izni verilmedi. Adres çubuğundaki simgeden mikrofona izin verin.","network":"Ses tanıma için internet bağlantısı gerekiyor. Yazarak da ekleyebilirsiniz."}[e.error]||"Ses alınamadı, tekrar deneyin.";
+    wantListen=false;
+  };
+  rec.onend=()=>{
+    if(sessionText.trim()){ finalText+=sessionText.trim()+" "; sessionText=""; }
+    if(wantListen && Date.now()-lastSpeech<SUSMA){ try{ beginSession(); return; }catch(e){} }
+    finishListening();
+  };
+  rec.start();
+}
 $("#mic").onclick=()=>{
-  if(listening){ try{rec.stop()}catch(e){} return; }
+  if(listening){ finishListening(); return; }
   if(!SR){ $("#txt").focus(); return; }
   if(permState()==="default") askPermission();
-  rec=new SR(); rec.lang="tr-TR"; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
-  const base=$("#txt").value?$("#txt").value.trim()+" ":""; heard="";
-  rec.onresult=e=>{ let s=""; for(const r of e.results) s+=r[0].transcript; heard=s; $("#txt").value=base+s; autoGrow(); };
-  rec.onerror=e=>{ const msg={"not-allowed":"Mikrofon izni verilmedi. Adres çubuğundaki simgeden mikrofona izin verin.","no-speech":"Ses duyulmadı, tekrar deneyin.","network":"Ses tanıma için internet bağlantısı gerekiyor."}[e.error]||"Ses alınamadı, tekrar deneyin.";
-    status(msg,"err"); };
-  rec.onend=()=>{ listening=false; $("#mic").classList.remove("on"); if(heard.trim()) submit(); else if($("#status").textContent==="Dinliyorum…") status(""); };
-  try{ rec.start(); listening=true; $("#mic").classList.add("on"); status("Dinliyorum…","ok"); }catch(e){ status("Mikrofon başlatılamadı, tekrar deneyin.","err"); }
+  base=$("#txt").value?$("#txt").value.trim()+" ":""; finalText=""; sessionText=""; micError=null;
+  lastSpeech=Date.now(); wantListen=true;
+  try{ beginSession(); listening=true; $("#mic").classList.add("on"); status("Dinliyorum… Bitince mikrofona dokunun ya da biraz susun.","ok"); }
+  catch(e){ wantListen=false; status("Mikrofon başlatılamadı, tekrar deneyin.","err"); return; }
+  clearInterval(silenceTimer);
+  silenceTimer=setInterval(()=>{ if(listening && Date.now()-lastSpeech>=SUSMA) finishListening(); },300);
 };
 
 render(); checkReminders(); syncSchedule(); registerPeriodic(); initCloud(); renderCloud();
