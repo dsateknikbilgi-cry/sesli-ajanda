@@ -137,6 +137,7 @@ dialog[open]{animation:up .22s ease-out}
 .btn.danger{background:transparent;color:var(--late)}
 .btn.danger.arm{background:var(--late);color:#fff}
 a.cal{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);color:var(--ink);text-decoration:none;font-weight:600;font-size:.93rem}
+a.btn{display:flex;align-items:center;justify-content:center;text-decoration:none}
 a.cal small{display:block;color:var(--muted);font-weight:500;font-size:.8rem}
 .note{font-size:.85rem;color:var(--muted);background:var(--soft);border-radius:12px;padding:12px 14px;margin:0}
 .switch{flex-direction:row !important;align-items:center;justify-content:space-between;color:var(--ink) !important;font-size:.95rem !important}
@@ -220,6 +221,20 @@ a.cal small{display:block;color:var(--muted);font-weight:500;font-size:.8rem}
       <button type="submit" class="btn main" id="e-save">Kaydet</button>
     </div>
   </form>
+</dialog>
+
+<!-- telefon komutu -->
+<dialog id="cmd" aria-labelledby="cmd-h">
+  <div class="sheet">
+    <div class="grab"></div>
+    <h3 id="cmd-h">Telefon komutu</h3>
+    <p class="note" id="cmd-desc"></p>
+    <div class="btns" id="cmd-main"></div>
+    <div class="btns">
+      <button type="button" class="btn ghost" id="cmd-task">İş olarak ekle</button>
+      <button type="button" class="btn ghost" id="cmd-cancel">Vazgeç</button>
+    </div>
+  </div>
 </dialog>
 
 <!-- ayarlar -->
@@ -446,6 +461,132 @@ function findTask(q){
   const hits=tasks.filter(t=>t.title.toLocaleLowerCase("tr").includes(q));
   return hits.find(t=>!t.done)||hits[0]||null;
 }
+/* ---------- telefon komutları ----------
+   Web uygulaması telefona kendi başına iş yaptıramaz; ilgili uygulamayı hazır açar,
+   kullanıcı tek dokunuşla onaylar. Tarih/saat içeren cümleler (alarm hariç) iş olarak eklenir. */
+const APPS={
+  "whatsapp":["com.whatsapp","WhatsApp"],"youtube":["com.google.android.youtube","YouTube"],
+  "instagram":["com.instagram.android","Instagram"],"facebook":["com.facebook.katana","Facebook"],
+  "haritalar":["com.google.android.apps.maps","Haritalar"],"harita":["com.google.android.apps.maps","Haritalar"],"google haritalar":["com.google.android.apps.maps","Haritalar"],
+  "gmail":["com.google.android.gm","Gmail"],"takvim":["com.google.android.calendar","Takvim"],
+  "chrome":["com.android.chrome","Chrome"],"spotify":["com.spotify.music","Spotify"],
+  "telegram":["org.telegram.messenger","Telegram"],"hesap makinesi":["com.google.android.calculator","Hesap Makinesi"],
+  "fotoğraflar":["com.google.android.apps.photos","Fotoğraflar"],"galeri":["com.google.android.apps.photos","Fotoğraflar"],
+  "drive":["com.google.android.apps.docs","Drive"],"play store":["com.android.vending","Play Store"],
+  "trendyol":["trendyol.com","Trendyol"],"hepsiburada":["com.pozitron.hepsiburada","Hepsiburada"],
+  "yemeksepeti":["com.inovel.app.yemeksepeti","Yemeksepeti"],"e-devlet":["tr.gov.turkiye.edevlet.kapisi","e-Devlet"],"edevlet":["tr.gov.turkiye.edevlet.kapisi","e-Devlet"]
+};
+const isAndroid=/Android/i.test(navigator.userAgent);
+const intentLaunch=(pkg)=>"intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package="+pkg+";end";
+// "konya'ya" -> "konya", "eczaneye" -> "eczane"; kesme işareti yoksa yalnızca -ye/-ya atılır
+const stripSuffix=w=>{ w=w.trim(); return /['’]/.test(w)? w.replace(/['’].*$/,"").trim() : w.replace(/(?<=[aeıioöuü])y[ae]$/i,"").trim(); };
+const capTR=x=>x?x.charAt(0).toLocaleUpperCase("tr")+x.slice(1):x;
+const titleTR=x=>x?x.split(/\s+/).map(capTR).join(" "):x;
+function splitTarget(body){
+  // "mehmet'e yarın geliyorum" -> ["Mehmet", "yarın geliyorum"]
+  body=body.trim();
+  // önce kesme işaretli hedef: "mehmet'e ...", "ali bey'e ..."
+  let m=body.match(/^(.{1,30}?)['’](?:y?[ae])(?:\s+(.*))?$/i);
+  if(m) return [titleTR(m[1]), (m[2]||"").trim()];
+  // kesme işaretsiz yönelme eki: "annemin numarasına ...", "muhasebeye ..."
+  m=body.match(/^((?:\S+\s+){0,2}\S+?(?:y[ae]|n[ae]))(?:\s+(.*))?$/i);
+  if(m) return [titleTR(m[1]), (m[2]||"").trim()];
+  return ["", body];
+}
+function phoneCommand(text){
+  const low=" "+text.trim().toLocaleLowerCase("tr").replace(/[.!?]+$/,"")+" ";
+  const p=parse(text);
+  let m;
+  // alarm: "beni saat 8'de kaldır", "yarın 7'de uyandır", "8'e alarm kur"
+  if(/\s(kaldır|uyandır)(\s|$)|alarm\s+(kur|ayarla|koy)/.test(low)){
+    let tm=p.time;
+    const a=low.match(/\s(\d{1,2})(?:[:.](\d{2}))?['’]?\s*(?:y?[ae])?\s+alarm/);
+    if(!tm && a && +a[1]<24) tm=pad(+a[1])+":"+pad(+(a[2]||0));
+    if(!tm) return null;
+    const [h,mi]=tm.split(":").map(Number); p.time=tm;
+    return {type:"alarm",h,mi,due:p.due,label:"Saat "+p.time+" için alarm"};
+  }
+  // zamanlayıcı: "10 dakikalık zamanlayıcı", "5 dakika geri say"
+  if(m=low.match(/\s(\d+|bir|iki|üç|beş|on|on beş|yirmi|otuz|kırk beş|yarım)\s+(saniye|dakika|dk|saat)(?:lık|lik)?\s+(?:zamanlayıcı|sayaç|geri say)/)){
+    const n=NUMW[m[1]]!=null?NUMW[m[1]]:+m[1];
+    const sec=Math.round(m[2]==="saniye"?n:m[2]==="saat"?n*3600:n*60);
+    return {type:"timer",sec,label:m[1]+" "+m[2]+" zamanlayıcı"};
+  }
+  // whatsapp / sms / e-posta: "Mehmet'e WhatsApp'tan yarın geliyorum yaz", "muhasebeye mail at fatura gönderildi"
+  const kind=/whatsapp|vatsap/.test(low)?"wa":/\s(mail|e-?posta|eposta)/.test(low)?"mail":/\s(sms|mesaj|kısa mesaj)/.test(low)?"sms":null;
+  const KW=/\s(?:whatsapp|vatsap)['’]?(?:tan|dan|la|ile)?(?=\s)|\s(?:kısa mesaj|sms|mesaj|e-?posta|eposta|mail)(?:['’]?(?:la|ile|tan|dan|ı|i))?(?=\s)/g;
+  if(kind){
+    let body=null;
+    if(/\s(yaz|gönder|at|de)\s*$/.test(low)) body=low.replace(/\s(yaz|gönder|at|de)\s*$/," ");
+    else { const mm=low.match(/^(.*?)(?:\s(?:whatsapp|vatsap|kısa mesaj|sms|mesaj|e-?posta|eposta|mail)\S*)+\s(?:yaz|gönder|at)\s(.+)$/); if(mm) body=mm[1]+" "+mm[2]; }
+    if(body!==null){
+      body=body.replace(KW," ").replace(/\s(?:diye|şunu)(?=\s)/g," ").replace(/\s+/g," ").trim();
+      const [who,m2]=splitTarget(body);
+      return {type:kind,who,msg:capTR(m2),label:(kind==="wa"?"WhatsApp":kind==="sms"?"SMS":"E-posta")+(who?" — "+who:"")};
+    }
+  }
+  // tarih/saat varsa diğer komutlar iş olarak eklensin ("yarın 14'te Ali Bey'i ara")
+  if(p.due||p.time) return null;
+  // yol tarifi: "Konya'ya yol tarifi", "eczaneye nasıl giderim"
+  if(m=low.match(/^\s(.+?)\s+(?:yol tarifi(?: ver)?|nasıl giderim|navigasyon(?:u aç)?|götür)\s*$/)) {
+    const dest=stripSuffix(m[1]); return {type:"maps",dest,label:"Yol tarifi — "+capTR(dest)};
+  }
+  if(m=low.match(/^\s(?:yol tarifi|navigasyon)\s+(.+?)\s*$/)){ const dest=stripSuffix(m[1]); return {type:"maps",dest,label:"Yol tarifi — "+capTR(dest)}; }
+  // arama: "Ali Bey'i ara", "0532 123 45 67 ara"
+  if(m=low.match(/^\s(.+?)\s+(?:ara|arayalım|aramayı başlat)\s*$/)){
+    const who=m[1].trim(), num=(who.match(/[+\d][\d\s-]{6,}\d/)||[])[0];
+    const nm=titleTR(stripSuffix(who)); return {type:"call",who:nm,num:num?num.replace(/[\s-]/g,""):null,label:"Ara — "+(num||nm)};
+  }
+  // uygulama açma: "WhatsApp'ı aç", "YouTube uygulamasını aç"
+  if(m=low.match(/^\s(.+?)\s*(?:uygulamasını|programını)?\s*aç\s*$/)){
+    const raw=m[1].replace(/\s*(uygulamasını|programını)$/,"").trim(), cands=[raw.replace(/['’].*$/,""), raw.replace(/[ıiuü]$/,""), raw.replace(/y[ıiuü]$/,"")];
+    const key=Object.keys(APPS).sort((x,y)=>y.length-x.length).find(k=>cands.some(n=>n===k));
+    if(key) return {type:"app",pkg:APPS[key][0],name:APPS[key][1],label:APPS[key][1]+" uygulamasını aç"};
+  }
+  return null;
+}
+let cmdNow=null;
+function cmdLink(href,text){ const a=document.createElement("a"); a.className="btn main"; a.href=href; a.textContent=text; a.rel="noopener"; a.onclick=()=>setTimeout(()=>$("#cmd").close(),400); return a; }
+function cmdButton(text,fn){ const b=document.createElement("button"); b.type="button"; b.className="btn main"; b.textContent=text; b.onclick=fn; return b; }
+function openCmd(c,text){
+  cmdNow={c,text}; const box=$("#cmd-main"); box.innerHTML=""; let d="";
+  const enc=encodeURIComponent;
+  if(c.type==="alarm"){
+    d=isAndroid?"Telefonun Saat uygulaması "+pad(c.h)+":"+pad(c.mi)+" alarmı hazır olarak açılacak. Açılan ekranda Kaydet'e basın. Açılmazsa “İş olarak ekle” deyin, o saatte hatırlatırım.":"Bu telefonda alarm uygulaması açılamıyor. “İş olarak ekle” ile o saatte hatırlatayım.";
+    if(isAndroid) box.appendChild(cmdLink("intent:#Intent;action=android.intent.action.SET_ALARM;i.android.intent.extra.alarm.HOUR="+c.h+";i.android.intent.extra.alarm.MINUTES="+c.mi+";S.android.intent.extra.alarm.MESSAGE="+enc("Sesli Ajanda")+";end","Alarmı kur"));
+  } else if(c.type==="timer"){
+    d=isAndroid?"Saat uygulamasında zamanlayıcı açılacak.":"Bu telefonda zamanlayıcı açılamıyor.";
+    if(isAndroid) box.appendChild(cmdLink("intent:#Intent;action=android.intent.action.SET_TIMER;i.android.intent.extra.alarm.LENGTH="+c.sec+";S.android.intent.extra.alarm.MESSAGE="+enc("Sesli Ajanda")+";end","Zamanlayıcıyı başlat"));
+  } else if(c.type==="call"){
+    if(c.num){ d=c.num+" aranacak."; box.appendChild(cmdLink("tel:"+c.num,"Ara")); }
+    else if("contacts" in navigator && "select" in navigator.contacts){
+      d=(c.who?c.who+" için ":"")+"rehberden kişiyi seçin, arama hazırlansın.";
+      box.appendChild(cmdButton("Rehberden seç",async()=>{ try{ const r=await navigator.contacts.select(["name","tel"],{multiple:false}); const tel=r&&r[0]&&r[0].tel&&r[0].tel[0]; if(tel){ location.href="tel:"+tel.replace(/[\s-]/g,""); $("#cmd").close(); } }catch(e){} }));
+      box.appendChild(cmdLink("tel:","Tuş takımını aç"));
+    } else { d=(c.who?c.who+" için ":"")+"telefon uygulaması açılacak, kişiyi oradan seçin."; box.appendChild(cmdLink("tel:","Telefonu aç")); }
+  } else if(c.type==="wa"){
+    d="WhatsApp mesaj yazılı olarak açılacak"+(c.who?", "+c.who+" kişisini seçip":", kişiyi seçip")+" gönderin."+(c.msg?"\n\n“"+c.msg+"”":"");
+    box.appendChild(cmdLink("https://wa.me/?text="+enc(c.msg||""),"WhatsApp'ta aç"));
+  } else if(c.type==="sms"){
+    d="Mesajlar uygulaması açılacak"+(c.who?", "+c.who+" kişisini seçip":"")+" gönderin."+(c.msg?"\n\n“"+c.msg+"”":"");
+    box.appendChild(cmdLink("sms:?body="+enc(c.msg||""),"Mesajlarda aç"));
+  } else if(c.type==="mail"){
+    d="E-posta taslağı açılacak"+(c.who?" ("+c.who+")":"")+"."+(c.msg?"\n\n“"+c.msg+"”":"");
+    box.appendChild(cmdLink("mailto:?body="+enc(c.msg||""),"E-postada aç"));
+  } else if(c.type==="maps"){
+    d=capTR(c.dest)+" için yol tarifi açılacak.";
+    box.appendChild(cmdLink("https://www.google.com/maps/dir/?api=1&destination="+enc(c.dest),"Yol tarifini aç"));
+  } else if(c.type==="app"){
+    d=isAndroid?c.name+" açılacak.":"Bu telefonda uygulama açma desteklenmiyor.";
+    if(isAndroid) box.appendChild(cmdLink(intentLaunch(c.pkg),c.name+"'ı aç"));
+  }
+  $("#cmd-h").textContent=c.label; $("#cmd-desc").textContent=d; $("#cmd-desc").style.whiteSpace="pre-line";
+  $("#txt").value=""; autoGrow(); status("");
+  $("#cmd").showModal();
+}
+$("#cmd-cancel").onclick=()=>$("#cmd").close();
+$("#cmd-task").onclick=()=>{ const t=cmdNow&&cmdNow.text; $("#cmd").close(); if(t) addTasks(t); };
+
 function submit(){
   refreshDates();
   const text=$("#txt").value.trim(); if(!text) return;
@@ -456,6 +597,11 @@ function submit(){
     else { tasks=tasks.filter(x=>x!==target); closeNotif(target.id); save(); render(); checkReminders(); status("Silindi: "+target.title,"ok"); }
     return;
   }
+  const pc=phoneCommand(text);
+  if(pc){ openCmd(pc,text); return; }
+  addTasks(text);
+}
+function addTasks(text){
   const items=splitItems(text).map(parse);
   for(const it of items){ it.id=Date.now().toString(36)+Math.random().toString(36).slice(2,6); it.done=false; it.createdAt=Date.now(); tasks.push(it); }
   save(); $("#txt").value=""; autoGrow(); render(); checkReminders();
